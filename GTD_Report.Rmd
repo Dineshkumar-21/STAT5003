@@ -39,7 +39,7 @@ pc <- function(x) sprintf('%.1f%%',100*x)
 
 # Classifying fatality severity in recorded terrorist incidents
 
-**GROUP: W12G05**  
+**GROUP: W13G05**  
 
 <div class="question">
 **Research question:** How accurately can recorded incident context classify GTD incidents in 2019–2020 into zero, 1–4 and 5+ fatalities when models are developed on 2012–2018 incidents?
@@ -53,7 +53,7 @@ The unit is one **recorded incident**. The outcome uses `nkill`: zero, 1–4 or 
 
 ### 2. Consider and gather data
 
-The dataset, 'globalterrorismdb_0522dist.xlsx', is the May 2022 distribution of the Global Terrorism Database (GTD)(https://www.start.umd.edu/data-tools/GTD), maintained by the National Consortium for the Study of Terrorism and Responses to Terrorism (START), University of Maryland (START, 2022). It contains incident-level descriptors and recorded fatality counts that directly support the research question on classifying fatality-severity bands. This is an external research dataset, not a built-in R dataset or a prohibited Kaggle topic. The project uses one source only and does not perform external data linkage. Therefore, integration is not claimed as a dataset characteristic.
+The dataset, `globalterrorismdb_0522dist.xlsx`, is the May 2022 distribution of the [Global Terrorism Database (GTD)](https://www.start.umd.edu/data-tools/GTD), maintained by the National Consortium for the Study of Terrorism and Responses to Terrorism (START), University of Maryland (START, 2022). It contains incident-level descriptors and recorded fatality counts that directly support the research question on classifying fatality-severity bands. This is an external research dataset, not a built-in R dataset or a prohibited Kaggle topic. The project uses one source only and does not perform external data linkage. Therefore, integration is not claimed as a dataset characteristic.
 
 ```{r load-data}
 library(readxl)
@@ -90,7 +90,7 @@ knitr::kable(data.frame(
 
 The source spans 1970–2020. Its 135 fields are not 135 independent predictors. The complexity requirement refers to the source. The proposed models will use nine source inputs. Large size, messiness and multiclass structure independently meet three requirements.
 
-<div class="footer">W12G05 <span style="float:right">1 / 6 · Project plan and EDA</span></div>
+<div class="footer">W13G05 <span style="float:right">1 / 6 · Project plan and EDA</span></div>
 :::
 
 ::: {.report-page}
@@ -104,7 +104,7 @@ knitr::kable(data.frame(Stage=c('Full source, 1970–2020','Recent cohort, 2012�
  'Unknown fatalities excluded','Development, 2012–2018','Holdout, 2019–2020'),
  Incidents=c(fmt(a$rows),fmt(a$recent_n),fmt(a$unknown_n),fmt(a$train_n),fmt(a$test_n)),
  Purpose=c('Source audit','More consistent collection era','No invented response labels',
- 'EDA, preprocessing and temporal validation','Fixed later-period evaluation')),
+ 'EDA, preprocessing and temporal validation','Planned later period evaluation')),
  format='html',row.names=FALSE)
 ```
 
@@ -122,7 +122,7 @@ plot_univariate(res)
 
 The 5+ class is `r pc(a$train_classes[3]/a$train_n)` of development records, versus `r pc(a$train_classes[1]/a$train_n)` and `r pc(a$train_classes[2]/a$train_n)` for the other bands. The largest class is `r sprintf('%.2f',max(a$train_classes)/min(a$train_classes))` times the smallest. Majority accuracy therefore cannot demonstrate useful multiclass performance.
 
-<div class="footer">W12G05<span style="float:right">2 / 6 · Project plan and EDA</span></div>
+<div class="footer">W13G05<span style="float:right">2 / 6 · Project plan and EDA</span></div>
 :::
 
 ::: {.report-page}
@@ -144,7 +144,7 @@ plot_feature_relationships(res)
 
 Attack and weapon categories overlap substantially (**Cramér’s V = `r dec(a$cramers_v)`**), supporting regularisation and a check against naïve Bayes’ independence assumption. Fatalities and injuries have **Spearman ρ = `r dec(a$rho)`**, but injuries are an outcome consequence and are excluded from predictors. Annual recorded counts change markedly, supporting temporal validation instead of a random split. All feature–outcome exploration uses development data.
 
-<div class="footer">W12G05 <span style="float:right">3 / 6 · Project plan and EDA</span></div>
+<div class="footer">W13G05 <span style="float:right">3 / 6 · Project plan and EDA</span></div>
 :::
 
 ::: {.report-page}
@@ -158,12 +158,12 @@ Attack and weapon categories overlap substantially (**Cramér’s V = `r dec(a$c
 
 **Excluded variables:** recorded deaths, injuries, success, suicide, property damage, narrative text, perpetrator identities, event IDs and source text. Deaths define the outcome, while injuries, success and damage are recorded consequences of the same incident; including them could leak post-incident information into the classification task. Narratives, identities, IDs and source text are excluded because they are high-cardinality, retrospectively coded, identifying, or may contain direct outcome clues.
 
-These descriptors are used for retrospective classification of recorded GTD incidents. Their availability before or during a real-world incident is not assumed. The project does not claim prospective operational prediction.
+These descriptors are used for retrospective classification of recorded GTD incidents. Their availability before or during a real-world incident is not assumed. 
 
-1. Define the cohort and three response bands. Exclude missing or negative fatalities; never impute a target. Preserve genuine extreme values.
+1. We will define the cohort and three response bands. Exclude missing or negative fatalities and never to impute a target. Preserve genuine extreme values.
 2. Map categorical “Unknown” and blanks to “Missing”. Mark invalid coordinates and month outside 1–12 as missing. Learn numerical medians from the training partition and add missingness indicators.
 3. Replace month with sine/cosine to represent its cycle. Standardise numeric features using training means/standard deviations. Pool categorical levels occurring fewer than 100 times into “Other”; unseen levels map there too.
-4. Fit every transformation separately inside each temporal fold. Logistic regression, the decision tree and boosting use a one-hot design matrix (with dimensionality checked after training-only encoding); forest and naïve Bayes use factors. One-hot tree inputs avoid costly searches over many country-level partitions. PCA and synthetic oversampling are not planned.
+4. Fit every transformation separately inside each temporal fold. Logistic regression, the decision tree and boosting use a one-hot design matrix (with dimensionality checked after training-only encoding);random forest and naïve Bayes use factors. One-hot tree inputs avoid costly searches over many country level partitions. PCA and synthetic oversampling are not planned.
 
 ```{r five-model-plan, results='asis'}
 knitr::kable(data.frame(
@@ -182,7 +182,7 @@ knitr::kable(data.frame(
  format='html',row.names=FALSE)
 ```
 
-**Proposed splitting and tuning.** Train 2012–2016 → validate 2017; train 2012–2017 → validate 2018. Compare two configurations per family: **10 candidates and 20 temporal validation fits**, with seed 5003. Select the highest mean validation macro-F1, giving the two years equal weight. Refit each family’s selected configuration on 2012–2018 and evaluate on the fixed 2019–2020 holdout. The proposed comparison will use validation scores for selection and avoid test-driven retuning. Because an earlier exploratory draft already inspected 2019–2020 performance, this period cannot be claimed as an untouched final test; a new later-period dataset will be required for an independent final evaluation.
+**Proposed splitting and tuning.** Train 2012–2016 → validate 2017; train 2012–2017 → validate 2018. Compare two configurations per family: **10 candidates and 20 temporal validation fits**, with seed 5003. Select the highest mean validation macro-F1, giving the two years equal weight. Refit each family’s selected configuration on 2012–2018 and evaluate on the planned 2019–2020 holdout. The proposed comparison will use validation scores for selection and avoid test-driven retuning. Because an earlier exploratory draft already inspected 2019–2020 performance, this period cannot be claimed as an untouched final test; a new later-period dataset will be required for an independent final evaluation.
 
 **Planned class treatment and computation.** Multinomial logistic regression, the decision tree and gradient boosting will use inverse-frequency case weights.The random forest will use weighted case sampling and Naïve Bayes will use equal class priors. Two bounded configurations per model family will be compared. Intermediate results will be cached and random-forest computation capped at four threads. If resources are limited, a one-thread forest rerun will be used.
 
@@ -192,7 +192,7 @@ knitr::kable(data.frame(
 ```{r complete-r-source, eval=FALSE, code=readLines('eda.R',warn=FALSE)}
 ```
 
-<div class="footer">W12G05 <span style="float:right">4 / 6 · Project plan and EDA</span></div>
+<div class="footer">W13G05 <span style="float:right">4 / 6 · Project plan and EDA</span></div>
 :::
 
 ::: {.report-page .planning-page}
@@ -200,7 +200,9 @@ knitr::kable(data.frame(
 
 ## 4.1 Evaluation plan and project timeline
 
-**Evaluation plan.** Use macro-F1 as the primary metric because each severity band should contribute equally despite class imbalance. Also report per-class precision, recall and F1, balanced accuracy (mean recall), ordinary accuracy and a row-normalised confusion matrix. Recall for the 5+ band measures missed severe incidents; precision measures false alarms. Compare every model with a training-majority baseline. Select by mean temporal-validation macro-F1, refit on development data, and report a calendar-month block-bootstrap interval for the eventual test score. Weighted probabilities will require a development-only calibration check before probability interpretation.
+**Evaluation plan.** Macro-F1 will be the primary metric because it gives equal importance to all severity classes. Secondary metrics will be balanced accuracy, class-specific precision/recall/F1, accuracy, weighted F1, log loss and a row-normalised confusion matrix. Models will be selected by mean temporal-validation macro-F1 and compared with a majority-class baseline.Class-specific precision, recall and F1 will reveal which severity bands are difficult to classify: recall for the 5+ fatality class measures how many severe incidents are detected, while precision measures how reliable those predictions are. A row-normalised confusion matrix will show the direction of classification errors.
+
+Accuracy and weighted F1 will provide supplementary summaries, but will not determine model selection because they can favour common classes. Multiclass log loss will assess predicted probabilities and penalise confident incorrect predictions; class-weighted probabilities will require a calibration check using development data. Models will be selected by mean temporal-validation macro-F1 and compared with a majority-class baseline using the same evaluation records.
 
 ### Dated milestones and team responsibilities
 
@@ -208,24 +210,24 @@ The following is the planned finalisation schedule, drafted on 15 September 2026
 
 ### Team roles and responsibilities
 
-| Team member |Student ID |Projected Date/Time| Milestone | Primary responsibility | Supporting / backup role |
+| Team member |Student ID |Planned time window| Model | Primary responsibility | Supporting / backup role |
 |---|---:|---|---|---|---|
-| Harissh Jitendar| 560292439 | 22 Sep - 25 Oct |Multinomial logistic regression (`nnet`) | Project coordination; research-question framing; model implementation and tuning; final submission | Supports APA checking, model-comparison table and final integration |
-| Dineshkumar Palanisamy | 560404593 | 23 Sep - 15 Oct  |Decision tree (`rpart`) | Data-audit and EDA verification; decision-tree implementation, pruning/depth tuning and interpretation | Backup for multinomial logistic regression and cohort/missingness checks |
+| Harissh Jitendar| 560292439 | 22 Sep - 25 Oct |Multinomial logistic regression (`nnet`) | Project coordination; research-question framing;Multinomial logistic regression model implementation and tuning; final submission | Supports APA checking, model-comparison table and final integration, Backup for Naive Bayes |
+| Dineshkumar Palanisamy | 560404593 | 23 Sep - 15 Oct  |Decision tree (`rpart`) | Data-audit and EDA verification; decision-tree implementation, pruning/depth tuning and interpretation, Git coordination | Backup for multinomial logistic regression and cohort/missingness checks |
 | Wencheng Zhang |  520057863 |25 Sep - 17 Oct|Random forest (`ranger`) | Preprocessing pipeline review; random-forest implementation, class weighting and hyperparameter tuning | Backup for decision-tree modelling and variable-importance interpretation |
 | Mayu Tsuchimoto | 540442926 | 26 Sep - 18 Oct |Gradient boosting (`gbm`) | Feature-engineering review; gradient-boosting implementation, tuning and performance comparison | Backup for random-forest modelling and computation troubleshooting |
-| Honghao Li | [Student ID] |27 Sep - 20 Oct |Naive Bayes (`e1071`) | Evaluation framework: macro-F1, balanced accuracy, per-class precision/recall/F1, confusion matrix and baseline comparison; Naive Bayes implementation | Backup for gradient boosting, final HTML/code-folding/rendering checks |
+| Honghao Li | 550293370 |27 Sep - 20 Oct |Naive Bayes (`e1071`) | Evaluation framework: macro-F1, balanced accuracy, per-class precision/recall/F1, confusion matrix and baseline comparison; Naive Bayes implementation | Backup for gradient boosting, final HTML/code-folding/rendering checks |
 
-Note: Presentation slides preparation and report review will be contributed by all members.
+Note: Presentation slide preparation and final report review will be completed collaboratively by all members.
 
-<div class="footer">W12G05<span style="float:right">5 / 6 · Project plan and EDA</span></div>
+<div class="footer">W13G05<span style="float:right">5 / 6 · Project plan and EDA</span></div>
 
-**Backup plan:** Each team member is responsible for one model family and maintains their R script, tuning settings and validation outputs in the shared project repository. If a member is unavailable, the nominated backup will use the documented script and shared preprocessing pipeline to continue the work. All preprocessing rules, temporal splits and evaluation functions will be shared so that each model is evaluated consistently. If a computationally intensive model cannot be completed within the available resources, the team will retain the verified baseline and remaining models, document the limitation, and avoid inventing or substituting performance results. The designated backup submitter will upload the checked HTML if the primary submitter is unavailable.
+**Backup plan:** Each team member is responsible for one model family and maintains their R script, tuning settings and validation outputs in the shared Git project repository. If a member is unavailable or encountering issues, the nominated backup will use the documented script and shared preprocessing pipeline to continue the work. All preprocessing rules, temporal splits and evaluation functions will be shared so that each model is evaluated consistently. If a computationally intensive model cannot be completed within the available resources, the team will retain the verified baseline and remaining models, document the limitation, and avoid inventing or substituting performance results. The allocated backup submitter will upload the checked HTML if the primary submitter is unavailable.
 
 :::
 
 ::: {.report-page .references-page}
-<div class="eyebrow">STAT5003 · References</div>
+<div class="eyebrow">STAT5003 · References and acknowledgement</div>
 
 ## References
 
@@ -238,16 +240,13 @@ National Consortium for the Study of Terrorism and Responses to Terrorism (START
 National Consortium for the Study of Terrorism and Responses to Terrorism (START). (2022). *Global Terrorism Database, 1970–2020* [Data set]. University of Maryland. https://www.start.umd.edu/data-tools/GTD
 
 
-
-
 ## AI Acknowledgement
 
- In submitting this report, we acknowledge the use of OpenAI ChatGPT/Codex to assisted with R code, analysis suggestions, debugging and layout checks.
-The dataset selection, research question, ideas and visualisation plots were independently brainstormed and proposed by the team members.The AI generated refinements are reviewed by our team to ensure their accuracy, relevance and complaiance with the assignment's requirements.
+In submitting this report, we acknowledge the use of OpenAI ChatGPT/Codex to assist with R code, analysis suggestions, checking grammar, debugging and layout checks. We reviewed the AI generated refinements to ensure their accuracy, relevance and complaiance with the assignment's requirements.
 
 :::
 
-<div class="footer">W12G05<span style="float:right">6 / 6 · References</span></div>
+<div class="footer">W13G05<span style="float:right">6 / 6 · References</span></div>
 :::
 
 
