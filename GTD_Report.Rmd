@@ -1,0 +1,254 @@
+---
+title: "GTD Project Plan and EDA"
+output:
+  html_document:
+    self_contained: true
+    code_folding: hide
+    code_download: true
+    theme: default
+    highlight: textmate
+    css: report.css
+    toc: false
+    mathjax: null
+params:
+  data_file: "D:/USYD/SEM-2/STAT5003-Comp Stats/Assignment/globalterrorismdb_0522dist.xlsx"
+  rebuild: false
+---
+
+```{r setup, include=FALSE}
+for (p in c('r-library','../../work/Rlib')) {
+  if (dir.exists(p)) .libPaths(c(normalizePath(p),.libPaths()))
+}
+knitr::opts_chunk$set(echo=TRUE, message=FALSE, warning=FALSE,
+  fig.width=9, fig.height=3, dpi=160, out.width='100%', fig.align='center')
+source('eda.R')
+if (!params$rebuild && file.exists('results/eda_results.rds')) {
+  res <- readRDS('results/eda_results.rds')
+  if (file.exists(params$data_file)) {
+    stopifnot(identical(res$source_hash,digest::digest(file=params$data_file,algo='sha256')))
+  }
+} else res <- run_eda(params$data_file)
+a <- res$audit
+fmt <- function(x) format(x,big.mark=',',scientific=FALSE,trim=TRUE)
+dec <- function(x) sprintf('%.3f',x)
+pc <- function(x) sprintf('%.1f%%',100*x)
+```
+
+::: {.report-page}
+<div class="eyebrow">STAT5003 · Project Plan and EDA</div>
+
+# Classifying fatality severity in recorded terrorist incidents
+
+**GROUP: W12G05**  
+
+<div class="question">
+**Research question:** How accurately can recorded incident context classify GTD incidents in 2019–2020 into zero, 1–4 and 5+ fatalities when models are developed on 2012–2018 incidents?
+</div>
+
+### 1. Framing, motivation and dataset selection
+
+Humanitarian analysts and public-health researchers need to understand variation in the consequences of recorded violence and the reliability of historical evidence. Communities affected by violence are harmed by misleading estimates of severity. This analysis can inform research prioritisation and the examination of reporting gaps by identifying which contextual patterns persist in later data and where classification errors remain substantial.
+
+The unit is one **recorded incident**. The outcome uses `nkill`: zero, 1–4 or at least 5 deaths. These are transparent analytical bands, not an official GTD severity scale. The higher-count band preserves an adequately sized severe tail. GTD fatalities include victims and perpetrators (National Consortium for the Study of Terrorism and Responses to Terrorism [START], 2021). This is retrospective classification conditional on a recorded incident; it does not predict attack occurrence, civilian deaths or individual risk.
+
+### 2. Consider and gather data
+
+The dataset, 'globalterrorismdb_0522dist.xlsx', is the May 2022 distribution of the Global Terrorism Database (GTD)(https://www.start.umd.edu/data-tools/GTD), maintained by the National Consortium for the Study of Terrorism and Responses to Terrorism (START), University of Maryland (START, 2022). It contains incident-level descriptors and recorded fatality counts that directly support the research question on classifying fatality-severity bands. This is an external research dataset, not a built-in R dataset or a prohibited Kaggle topic. The project uses one source only and does not perform external data linkage. Therefore, integration is not claimed as a dataset characteristic.
+
+```{r load-data}
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(forcats)
+library(scales)
+library(knitr)
+library(patchwork)
+
+gtd <- readxl::read_excel(
+  "globalterrorismdb_0522dist.xlsx",
+  col_types = "text",
+  na = ""
+)
+
+dim(gtd)
+```
+
+```{r dataset-evidence, results='asis'}
+knitr::kable(data.frame(
+  Requirement=c('Large','Messy','Complex','Multiclass'),
+  Evidence=c(paste(fmt(a$rows),'incidents;',round(a$source_mb,1),'MB Excel file'),
+    paste(a$any_missing,'of',a$columns,'fields have blanks; missingness plotted on page 2'),
+    paste(a$columns,'source fields;',a$numeric_like,'numeric-like and',a$text_like,'text fields'),
+    paste('Three bands; development counts',paste(fmt(as.numeric(a$train_classes)),collapse=' / '))),
+  Implication=c('Bound tuning and cache results.Cap forest parallelism at four threads.',
+    'Distinguish unknown, zero and conditional not-applicable values.',
+    'Codes and labels repeat concepts. Select relevant features rather than all fields.',
+    'Use class-aware training, macro-F1 and per-class recall.')),
+  format='html',row.names=FALSE)
+```
+
+The source spans 1970–2020. Its 135 fields are not 135 independent predictors. The complexity requirement refers to the source. The proposed models will use nine source inputs. Large size, messiness and multiclass structure independently meet three requirements.
+
+<div class="footer">W12G05 <span style="float:right">1 / 6 · Project plan and EDA</span></div>
+:::
+
+::: {.report-page}
+<div class="eyebrow">STAT5003 · Exploratory data analysis</div>
+
+
+## 3. Cohort, missingness and distributions
+
+```{r cohort-table, results='asis'}
+knitr::kable(data.frame(Stage=c('Full source, 1970–2020','Recent cohort, 2012–2020',
+ 'Unknown fatalities excluded','Development, 2012–2018','Holdout, 2019–2020'),
+ Incidents=c(fmt(a$rows),fmt(a$recent_n),fmt(a$unknown_n),fmt(a$train_n),fmt(a$test_n)),
+ Purpose=c('Source audit','More consistent collection era','No invented response labels',
+ 'EDA, preprocessing and temporal validation','Fixed later-period evaluation')),
+ format='html',row.names=FALSE)
+```
+
+START documents historical collection changes and missing 1993 records (START, n.d.). Modelling starts in 2012 to reduce these discontinuities. No duplicate event IDs or exact rows were found. R imports all cells as text before converting wholly numeric-like fields, preventing type guessing from discarding later text values. Categories coded numerically remain nominal concepts.
+
+```{r missingness, code=c(paste0('plot_missing <- ',paste(deparse(plot_missing),collapse='\n')),'plot_missing(res)'), fig.height=2.75, fig.cap='Figure 1. Source blank-cell rates and recent missing/unknown patterns by year. The heatmap prints percentages; conditional fields may be not applicable.'}
+plot_missing(res)
+```
+
+Unknown fatalities affect **`r pc(a$unknown_n/a$recent_n)`** of recent incidents. Their rate changes by year, so exclusion limits inference to cases with recorded outcomes; missing-at-random is not established. Keep valid zeros. In development data, attack, weapon and target categories are unknown in `r sprintf('%.2f',a$missing_predictors['attacktype1_txt'])`%, `r sprintf('%.2f',a$missing_predictors['weaptype1_txt'])`% and `r sprintf('%.2f',a$missing_predictors['targtype1_txt'])`%, respectively. Coordinates are missing in `r sprintf('%.2f',a$missing_predictors['latitude'])`%. Sparse secondary-weapon, group and ransom fields are excluded.
+
+```{r outcome-distribution, code=c(paste0('plot_univariate <- ',paste(deparse(plot_univariate),collapse='\n')),'plot_univariate(res)'), fig.height=2.55, fig.cap='Figure 2. Development class balance and log-transformed fatality count. Transformation is for display only.'}
+plot_univariate(res)
+```
+
+The 5+ class is `r pc(a$train_classes[3]/a$train_n)` of development records, versus `r pc(a$train_classes[1]/a$train_n)` and `r pc(a$train_classes[2]/a$train_n)` for the other bands. The largest class is `r sprintf('%.2f',max(a$train_classes)/min(a$train_classes))` times the smallest. Majority accuracy therefore cannot demonstrate useful multiclass performance.
+
+<div class="footer">W12G05<span style="float:right">2 / 6 · Project plan and EDA</span></div>
+:::
+
+::: {.report-page}
+<div class="eyebrow">STAT5003 · Exploratory data analysis</div>
+
+## 3.1 Extremes and bivariate relationships
+
+Development fatalities have median **`r a$kill_summary['median']`**, mean **`r sprintf('%.2f',a$kill_summary['mean'])`**, 95th percentile **`r a$kill_summary['95%']`**, 99th percentile **`r a$kill_summary['99%']`**, and maximum **`r fmt(a$kill_summary['max'])`**. The 1.5 × IQR upper fence is `r a$outlier_fence`; `r fmt(a$outlier_n)` incidents exceed it. Deleting those observations would erase many severe events. Retain plausible extremes and investigate errors rather than automatically trimming the outcome.
+
+```{r feature-outcome, code=c(paste0('plot_bivariate <- ',paste(deparse(plot_bivariate),collapse='\n')),'plot_bivariate(res)'), fig.height=3.0, fig.cap='Figure 3. Within-category severity proportions, with group sample sizes. Development data only; five largest groups. Blue: 0 deaths; gold: 1–4; red: 5+. MENA: Middle East and North Africa.'}
+plot_bivariate(res)
+```
+
+The 5+ share is **`r pc(mean(res$eda$nkill[res$eda$attacktype1_txt=='Armed Assault']>=5))`** for armed assaults and **`r pc(mean(res$eda$nkill[res$eda$attacktype1_txt=='Bombing/Explosion']>=5))`** for bombings; it is **`r pc(mean(res$eda$nkill[res$eda$region_txt=='Sub-Saharan Africa']>=5))`** in Sub-Saharan Africa. These are conditional proportions among recorded incidents, not population-adjusted risk or causal effects. Differences motivate models capable of interactions and class-specific evaluation; geography must not be interpreted as individual risk.
+
+```{r feature-feature, code=c(paste0('plot_feature_relationships <- ',paste(deparse(plot_feature_relationships),collapse='\n')),'plot_feature_relationships(res)'), fig.height=3.0, fig.cap='Figure 4. Attack–weapon overlap and development incident counts. Only the five most frequent attack and weapon categories are displayed; percentages use all weapons in each attack-category denominator.'}
+plot_feature_relationships(res)
+```
+
+Attack and weapon categories overlap substantially (**Cramér’s V = `r dec(a$cramers_v)`**), supporting regularisation and a check against naïve Bayes’ independence assumption. Fatalities and injuries have **Spearman ρ = `r dec(a$rho)`**, but injuries are an outcome consequence and are excluded from predictors. Annual recorded counts change markedly, supporting temporal validation instead of a random split. All feature–outcome exploration uses development data.
+
+<div class="footer">W12G05 <span style="float:right">3 / 6 · Project plan and EDA</span></div>
+:::
+
+::: {.report-page}
+<div class="eyebrow">STAT5003 · Project planning</div>
+
+## 4. Preprocessing and five-model plan
+
+### Predictor selection and leakage control
+
+**Planned predictors:** country, region, primary attack category, primary weapon category, primary target category, year, month, latitude and longitude.
+
+**Excluded variables:** recorded deaths, injuries, success, suicide, property damage, narrative text, perpetrator identities, event IDs and source text. Deaths define the outcome, while injuries, success and damage are recorded consequences of the same incident; including them could leak post-incident information into the classification task. Narratives, identities, IDs and source text are excluded because they are high-cardinality, retrospectively coded, identifying, or may contain direct outcome clues.
+
+These descriptors are used for retrospective classification of recorded GTD incidents. Their availability before or during a real-world incident is not assumed. The project does not claim prospective operational prediction.
+
+1. Define the cohort and three response bands. Exclude missing or negative fatalities; never impute a target. Preserve genuine extreme values.
+2. Map categorical “Unknown” and blanks to “Missing”. Mark invalid coordinates and month outside 1–12 as missing. Learn numerical medians from the training partition and add missingness indicators.
+3. Replace month with sine/cosine to represent its cycle. Standardise numeric features using training means/standard deviations. Pool categorical levels occurring fewer than 100 times into “Other”; unseen levels map there too.
+4. Fit every transformation separately inside each temporal fold. Logistic regression, the decision tree and boosting use a one-hot design matrix (with dimensionality checked after training-only encoding); forest and naïve Bayes use factors. One-hot tree inputs avoid costly searches over many country-level partitions. PCA and synthetic oversampling are not planned.
+
+```{r five-model-plan, results='asis'}
+knitr::kable(data.frame(
+ Model=c('Multinomial logistic (nnet)','Decision tree (rpart)','Random forest (ranger)',
+         'Gradient boosting (gbm)','Naive Bayes (e1071)'),
+ Justification=c('Regularised linear comparator; tests whether additive context is sufficient.',
+ 'Interpretable nonlinear splits and interactions; depth control limits variance.',
+ 'Averages trees to capture heterogeneous patterns and reduce variance.',
+ 'Sequential trees capture residual nonlinear structure; shrinkage limits overfitting.',
+ 'Fast probabilistic comparator; correlated inputs challenge its independence assumption.'),
+ Tuning=c('Decay: 0.01 or 1; 1,000 iterations.',
+ '(Depth, cp): (8, .001) or (16, .0001); minimum leaf 50.',
+ 'Depth: 12 or 20; 200 trees, mtry 4, minimum node 10.',
+ 'Depth: 3 or 5; 150 trees, rate .05, minimum node 30, bag fraction .8.',
+ 'Laplace smoothing: 1 or 2; equal class priors.')),
+ format='html',row.names=FALSE)
+```
+
+**Proposed splitting and tuning.** Train 2012–2016 → validate 2017; train 2012–2017 → validate 2018. Compare two configurations per family: **10 candidates and 20 temporal validation fits**, with seed 5003. Select the highest mean validation macro-F1, giving the two years equal weight. Refit each family’s selected configuration on 2012–2018 and evaluate on the fixed 2019–2020 holdout. The proposed comparison will use validation scores for selection and avoid test-driven retuning. Because an earlier exploratory draft already inspected 2019–2020 performance, this period cannot be claimed as an untouched final test; a new later-period dataset will be required for an independent final evaluation.
+
+**Planned class treatment and computation.** Multinomial logistic regression, the decision tree and gradient boosting will use inverse-frequency case weights.The random forest will use weighted case sampling and Naïve Bayes will use equal class priors. Two bounded configurations per model family will be compared. Intermediate results will be cached and random-forest computation capped at four threads. If resources are limited, a one-thread forest rerun will be used.
+
+
+**R code:** The following folded block contains the executable R import, audit and EDA functions.
+
+```{r complete-r-source, eval=FALSE, code=readLines('eda.R',warn=FALSE)}
+```
+
+<div class="footer">W12G05 <span style="float:right">4 / 6 · Project plan and EDA</span></div>
+:::
+
+::: {.report-page .planning-page}
+<div class="eyebrow">STAT5003 · Project planning</div>
+
+## 4.1 Evaluation plan and project timeline
+
+**Evaluation plan.** Use macro-F1 as the primary metric because each severity band should contribute equally despite class imbalance. Also report per-class precision, recall and F1, balanced accuracy (mean recall), ordinary accuracy and a row-normalised confusion matrix. Recall for the 5+ band measures missed severe incidents; precision measures false alarms. Compare every model with a training-majority baseline. Select by mean temporal-validation macro-F1, refit on development data, and report a calendar-month block-bootstrap interval for the eventual test score. Weighted probabilities will require a development-only calibration check before probability interpretation.
+
+### Dated milestones and team responsibilities
+
+The following is the planned finalisation schedule, drafted on 15 September 2026, for this project.
+
+### Team roles and responsibilities
+
+| Team member |Student ID |Projected Date/Time| Milestone | Primary responsibility | Supporting / backup role |
+|---|---:|---|---|---|---|
+| Harissh Jitendar| 560292439 | 22 Sep - 25 Oct |Multinomial logistic regression (`nnet`) | Project coordination; research-question framing; model implementation and tuning; final submission | Supports APA checking, model-comparison table and final integration |
+| Dineshkumar Palanisamy | 560404593 | 23 Sep - 15 Oct  |Decision tree (`rpart`) | Data-audit and EDA verification; decision-tree implementation, pruning/depth tuning and interpretation | Backup for multinomial logistic regression and cohort/missingness checks |
+| Wencheng Zhang |  520057863 |25 Sep - 17 Oct|Random forest (`ranger`) | Preprocessing pipeline review; random-forest implementation, class weighting and hyperparameter tuning | Backup for decision-tree modelling and variable-importance interpretation |
+| Mayu Tsuchimoto | 540442926 | 26 Sep - 18 Oct |Gradient boosting (`gbm`) | Feature-engineering review; gradient-boosting implementation, tuning and performance comparison | Backup for random-forest modelling and computation troubleshooting |
+| Honghao Li | [Student ID] |27 Sep - 20 Oct |Naive Bayes (`e1071`) | Evaluation framework: macro-F1, balanced accuracy, per-class precision/recall/F1, confusion matrix and baseline comparison; Naive Bayes implementation | Backup for gradient boosting, final HTML/code-folding/rendering checks |
+
+Note: Presentation slides preparation and report review will be contributed by all members.
+
+<div class="footer">W12G05<span style="float:right">5 / 6 · Project plan and EDA</span></div>
+
+**Backup plan:** Each team member is responsible for one model family and maintains their R script, tuning settings and validation outputs in the shared project repository. If a member is unavailable, the nominated backup will use the documented script and shared preprocessing pipeline to continue the work. All preprocessing rules, temporal splits and evaluation functions will be shared so that each model is evaluated consistently. If a computationally intensive model cannot be completed within the available resources, the team will retain the verified baseline and remaining models, document the limitation, and avoid inventing or substituting performance results. The designated backup submitter will upload the checked HTML if the primary submitter is unavailable.
+
+:::
+
+::: {.report-page .references-page}
+<div class="eyebrow">STAT5003 · References</div>
+
+## References
+
+::: {.references}
+
+National Consortium for the Study of Terrorism and Responses to Terrorism (START). (n.d.). *Using GTD*. University of Maryland. https://www.start.umd.edu/using-gtd
+
+National Consortium for the Study of Terrorism and Responses to Terrorism (START). (2021). *Global Terrorism Database codebook: Methodology, inclusion criteria, and variables*. University of Maryland. https://www.start.umd.edu/sites/default/files/2024-10/Codebook.pdf
+
+National Consortium for the Study of Terrorism and Responses to Terrorism (START). (2022). *Global Terrorism Database, 1970–2020* [Data set]. University of Maryland. https://www.start.umd.edu/data-tools/GTD
+
+
+
+
+## AI Acknowledgement
+
+ In submitting this report, we acknowledge the use of OpenAI ChatGPT/Codex to assisted with R code, analysis suggestions, debugging and layout checks.
+The dataset selection, research question, ideas and visualisation plots were independently brainstormed and proposed by the team members.The AI generated refinements are reviewed by our team to ensure their accuracy, relevance and complaiance with the assignment's requirements.
+
+:::
+
+<div class="footer">W12G05<span style="float:right">6 / 6 · References</span></div>
+:::
+
+
+
